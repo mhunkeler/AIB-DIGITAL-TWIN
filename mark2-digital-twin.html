@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Digital Twin - Lufkin Mark II M-912D-365-168</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0e17;color:#e0e0e0;font-family:'Segoe UI',system-ui,sans-serif;overflow:hidden;height:100vh;display:flex;flex-direction:column}
+.header{background:linear-gradient(135deg,#141a28,#0d1117);border-bottom:1px solid #1e2d3d;padding:8px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.header h1{font-size:16px;font-weight:700;color:#00d4ff;letter-spacing:2px}
+.header .sub{font-size:12px;color:#5a7a9a;margin-top:2px}
+.header .logo{font-size:11px;color:#3a5a7a;text-align:right;line-height:1.5}
+.main{flex:1;position:relative;min-height:0}
+canvas{width:100%;height:100%;display:block}
+.panel{position:absolute;top:12px;right:12px;background:rgba(10,15,25,0.92);border:1px solid #1e2d3d;border-radius:8px;padding:14px 16px;min-width:195px;backdrop-filter:blur(8px)}
+.panel .title{font-size:10px;color:#3a6a8a;letter-spacing:1.5px;margin-bottom:10px;text-transform:uppercase;font-weight:700}
+.panel .row{display:flex;justify-content:space-between;margin-bottom:7px;font-size:12px}
+.panel .lbl{color:#5a7a9a}
+.panel .val{color:#00d4ff;font-weight:600;font-family:'Courier New',monospace;min-width:60px;text-align:right}
+.panel .sep{border-top:1px solid #1a2535;margin:8px 0}
+.controls{background:linear-gradient(135deg,#141a28,#0d1117);border-top:1px solid #1e2d3d;padding:8px 20px;display:flex;align-items:center;gap:15px;flex-shrink:0;flex-wrap:wrap}
+.controls label{font-size:12px;color:#5a7a9a;display:flex;align-items:center;gap:6px}
+.controls input[type=range]{width:120px;accent-color:#00d4ff;height:4px}
+.btn{background:#141e2e;border:1px solid #2a3a4a;color:#8a9aaa;padding:5px 14px;border-radius:4px;cursor:pointer;font-size:12px;font-family:inherit;transition:all .15s}
+.btn:hover{background:#1e2e3e;color:#c0d0e0;border-color:#3a5a7a}
+.btn.active{background:#0a2a4a;color:#00d4ff;border-color:#00608a}
+.tag{font-size:11px;color:#3a5a6a;margin-left:auto}
+</style>
+</head>
+<body>
+<div class="header">
+  <div>
+    <h1>DIGITAL TWIN &mdash; LUFKIN MARK II</h1>
+    <div class="sub">M-912D-365-168 &nbsp;|&nbsp; Pozo C147 &ndash; CAPSA Diadema</div>
+  </div>
+  <div class="logo">LUFKIN<br>Oilfield Products</div>
+</div>
+
+<div class="main">
+  <canvas id="cv"></canvas>
+  <div class="panel" id="panel">
+    <div class="title">Datos en Tiempo Real</div>
+    <div class="row"><span class="lbl">Angulo Manivela</span><span class="val" id="dCrank">0.0&deg;</span></div>
+    <div class="row"><span class="lbl">Angulo Viga</span><span class="val" id="dBeam">0.0&deg;</span></div>
+    <div class="sep"></div>
+    <div class="row"><span class="lbl">Pos. Barra Pulida</span><span class="val" id="dPos">0.0"</span></div>
+    <div class="row"><span class="lbl">Carrera</span><span class="val" id="dStroke">0.0"</span></div>
+    <div class="row"><span class="lbl">Fase</span><span class="val" id="dPhase">--</span></div>
+    <div class="sep"></div>
+    <div class="row"><span class="lbl">Velocidad</span><span class="val" id="dSPM">0.0 SPM</span></div>
+  </div>
+</div>
+
+<div class="controls">
+  <button class="btn" id="btnPause">&#9646;&#9646; Pausa</button>
+  <label>Velocidad: <input type="range" id="sldSpeed" min="0" max="15" step="0.5" value="7"></label>
+  <label>Manivela: <input type="range" id="sldCrank" min="0" max="360" step="1" value="0" disabled></label>
+  <button class="btn" id="btnLabels">Etiquetas</button>
+  <span class="tag">Carrera: 168" &nbsp;|&nbsp; Radio: 57" &nbsp;|&nbsp; SPM max: 9.9</span>
+</div>
+
+<script>
+// =====================================================
+// GEOMETRY — Lufkin Mark II M-912D-365-168 (inches)
+// Derived from API 11E geometry + dimensional data
+// =====================================================
+const A  = 200;   // front arm: pivot -> horsehead
+const C  = 135;   // rear arm:  pivot -> pitman connection
+const P  = 194;   // pitman length (center-to-center)
+const R  = 57;    // crank radius (mid hole)
+const Hh = 295;   // pivot height above base
+const G  = 112;   // crank shaft height above base
+const I  = 203;   // horizontal: pivot -> crank center (crank is LEFT)
+const HR = 42;    // horsehead curve radius (visual)
+
+// =====================================================
+// STATE
+// =====================================================
+let theta = 0;          // crank angle (rad), 0 = pointing right
+let spm   = 7;          // strokes per minute
+let paused = false;
+let showLabels = true;
+let t0 = 0;
+let prMax = -1e9, prMin = 1e9;
+let prevBeamAngle = 0;
+let phase = '';
+let cbRef = 0;   // carrier bar reference Y (computed at init)
+
+// =====================================================
+// CANVAS SETUP
+// =====================================================
+const cv = document.getElementById('cv');
+const cx = cv.getContext('2d');
+let S, ox, oy, dpr;
+
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  cv.width  = cv.clientWidth  * dpr;
+  cv.height = cv.clientHeight * dpr;
+  const ww = A + I + 220, wh = Hh + 180;
+  S = Math.min(cv.width / ww, cv.height / wh) * 0.78;
+  ox = cv.width * 0.58;
+  oy = cv.height * 0.88;
+}
+
+// World -> Canvas
+function W(x, y) { return [ox + x * S, oy - y * S]; }
+function Ws(v) { return v * S; }  // scale only
+
+// =====================================================
+// KINEMATICS — Four-bar linkage solver
+// =====================================================
+function solveBeam(th) {
+  const cpx = -I + R * Math.cos(th);
+  const cpy = G  + R * Math.sin(th);
+  const dx = cpx, dy = cpy - Hh;
+  const L = Math.sqrt(dx*dx + dy*dy);
+  const alpha = Math.atan2(dy, dx);
+  const cv2 = (C*C + L*L - P*P) / (2*C*L);
+  return alpha - Math.acos(Math.max(-1, Math.min(1, cv2))) - Math.PI;
+}
+
+function getPos(th) {
+  const phi = solveBeam(th);
+  const cosP = Math.cos(phi), sinP = Math.sin(phi);
+  return {
+    phi,
+    pivot:  { x: 0, y: Hh },
+    hhead:  { x: A * cosP, y: Hh + A * sinP },
+    rear:   { x: -C * cosP, y: Hh - C * sinP },
+    cCenter:{ x: -I, y: G },
+    cPin:   { x: -I + R * Math.cos(th), y: G + R * Math.sin(th) },
+    // beam extensions (front overlaps into horsehead by 10")
+    bFront: { x: (A+10) * cosP, y: Hh + (A+10) * sinP },
+    bRear:  { x: -(C+45) * cosP, y: Hh - (C+45) * sinP },
+    // counterweight center on beam
+    cwt:    { x: -(C+15) * cosP, y: Hh - (C+15) * sinP },
+    // carrier bar position (wireline mechanism: arc wrap converts rotation to linear)
+    // departure point is FIXED at (A, Hh), free wire length changes with phi
+    wire:   { x: A, y: cbRef + A * phi },
+  };
+}
+
+// =====================================================
+// DRAWING HELPERS
+// =====================================================
+function line(x1,y1,x2,y2,color,w) {
+  const [a,b]=W(x1,y1),[c,d]=W(x2,y2);
+  cx.strokeStyle=color; cx.lineWidth=w; cx.lineCap='round';
+  cx.beginPath(); cx.moveTo(a,b); cx.lineTo(c,d); cx.stroke();
+}
+function circ(x,y,r,fill,stroke,sw) {
+  const [a,b]=W(x,y);
+  cx.beginPath(); cx.arc(a,b,r*S,0,Math.PI*2);
+  if(fill){cx.fillStyle=fill;cx.fill();}
+  if(stroke){cx.strokeStyle=stroke;cx.lineWidth=sw||1;cx.stroke();}
+}
+function rect(x,y,w,h,fill,stroke) {
+  const [a,b]=W(x,y);
+  cx.fillStyle=fill; cx.fillRect(a,b,w*S,-h*S);
+  if(stroke){cx.strokeStyle=stroke;cx.lineWidth=1.5;cx.strokeRect(a,b,w*S,-h*S);}
+}
+function label(text,x,y,color,size,align) {
+  const [a,b]=W(x,y);
+  cx.font=(size||10)*dpr+'px "Segoe UI",system-ui,sans-serif';
+  cx.fillStyle=color||'#4a6a8a';
+  cx.textAlign=align||'center'; cx.textBaseline='middle';
+  cx.fillText(text,a,b);
+}
+
+// =====================================================
+// DRAW COMPONENTS
+// =====================================================
+
+function drawBg() {
+  const gr = cx.createLinearGradient(0,0,0,cv.height);
+  gr.addColorStop(0,'#080c14'); gr.addColorStop(0.6,'#0c1018'); gr.addColorStop(1,'#101820');
+  cx.fillStyle=gr; cx.fillRect(0,0,cv.width,cv.height);
+  // subtle grid
+  cx.strokeStyle='rgba(20,35,55,0.25)'; cx.lineWidth=0.5;
+  const gs=50*S;
+  for(let gx=ox%gs;gx<cv.width;gx+=gs){cx.beginPath();cx.moveTo(gx,0);cx.lineTo(gx,cv.height);cx.stroke();}
+  for(let gy=oy%gs;gy<cv.height;gy+=gs){cx.beginPath();cx.moveTo(0,gy);cx.lineTo(cv.width,gy);cx.stroke();}
+}
+
+function drawGround() {
+  const [x1,y1]=W(-I-80,0), [x2]=W(A+100,0);
+  // ground fill
+  cx.fillStyle='#0c150c';
+  cx.fillRect(x1,y1,x2-x1,cv.height-y1);
+  // ground surface
+  cx.strokeStyle='#1a3a1a'; cx.lineWidth=2*dpr;
+  cx.beginPath(); cx.moveTo(x1,y1); cx.lineTo(x2,y1); cx.stroke();
+  // hash marks
+  cx.strokeStyle='#15281a'; cx.lineWidth=1;
+  for(let hx=x1;hx<x2;hx+=12*S){
+    cx.beginPath(); cx.moveTo(hx,y1); cx.lineTo(hx-8*S,y1+10*S); cx.stroke();
+  }
+}
+
+function drawBase(p) {
+  // horizontal base frame from samson post area to crank area
+  rect(-I-35, 12, I+70, 10, '#1a2840','#253550');
+  // vertical supports
+  rect(-15, 0, 8, 20, '#1e2e45','#253550');
+  rect(15, 0, 8, 20, '#1e2e45','#253550');
+  rect(-I-20, 0, 8, 18, '#1e2e45','#253550');
+  rect(-I+12, 0, 8, 18, '#1e2e45','#253550');
+}
+
+function drawGearReducer(p) {
+  const gw=55, gh=85;
+  rect(-I-gw/2, G-5, gw, gh, '#1e2a3a','#2a3d55');
+  // detail lines
+  line(-I-gw/2+5, G-5-gh*0.3, -I+gw/2-5, G-5-gh*0.3, '#253550',1);
+  line(-I-gw/2+5, G-5-gh*0.6, -I+gw/2-5, G-5-gh*0.6, '#253550',1);
+  // label area
+  if(showLabels) label('REDUCTOR',-I, G-5-gh*0.5,'#3a5a7a',9);
+}
+
+function drawMotor(p) {
+  const mx=-I-55, mw=45, mh=40;
+  rect(mx, 15, mw, mh, '#151e28','#253040');
+  // shaft
+  line(mx+mw, 35, -I-28, 35, '#3a4a5a', 3);
+  // pulley representation
+  circ(mx+mw+2, 35, 6, '#2a3a4a','#3a5060',1.5);
+  circ(-I-22, G-10, 10, '#2a3a4a','#3a5060',1.5);
+  // belt (simplified)
+  const [a1,b1]=W(mx+mw+2,41), [a2,b2]=W(-I-22,G);
+  cx.strokeStyle='rgba(60,80,100,0.4)'; cx.lineWidth=2; cx.setLineDash([4,4]);
+  cx.beginPath(); cx.moveTo(a1,b1); cx.lineTo(a2,b2); cx.stroke();
+  cx.setLineDash([]);
+  if(showLabels) label('MOTOR',mx+mw/2, 15+mh+12,'#3a5a7a',9);
+}
+
+function drawSamsonPost(p) {
+  const baseW = 30;
+  // A-frame legs
+  line(-baseW, 0, 0, Hh, '#3d6090', 5*dpr);
+  line(baseW, 0, 0, Hh, '#3d6090', 5*dpr);
+  // cross braces
+  const h1=Hh*0.30, h2=Hh*0.55, h3=Hh*0.80;
+  const w1=baseW*(1-0.30), w2=baseW*(1-0.55), w3=baseW*(1-0.80);
+  line(-w1,h1,w1,h1,'#2a4a70',2.5*dpr);
+  line(-w2,h2,w2,h2,'#2a4a70',2.5*dpr);
+  line(-w3,h3,w3,h3,'#2a4a70',2);
+  if(showLabels) label('SAMSON POST',45, Hh*0.5,'#3a5a7a',9,'left');
+}
+
+function drawAngleBrace(p) {
+  // diagonal brace from 60% up samson post to rear base
+  line(0, Hh*0.6, -80, 0, '#2a4a70', 3*dpr);
+}
+
+function drawCrankPath(p) {
+  // faint circle showing crank pin path
+  circ(-I, G, R, null, 'rgba(40,70,100,0.2)', 1);
+}
+
+function drawCrankArm(p) {
+  const cc = p.cCenter, cp = p.cPin;
+  // crank arm
+  line(cc.x, cc.y, cp.x, cp.y, '#5a7090', 6*dpr);
+  // counterweight on opposite side of crank
+  const cwx = cc.x - (cp.x - cc.x) * 0.7;
+  const cwy = cc.y - (cp.y - cc.y) * 0.7;
+  circ(cwx, cwy, 18, '#b8860b','#d4a017',2);
+  circ(cwx, cwy, 10, '#8a6a0a', null, 0);
+  // crank pin
+  circ(cp.x, cp.y, 4, '#d0d8e0','#e8f0f5',1.5);
+  // crank center bearing
+  circ(cc.x, cc.y, 5, '#a0a8b0','#c0c8d0',1.5);
+  if(showLabels) label('MANIVELA', cc.x, cc.y+R+20,'#3a5a7a',9);
+}
+
+function drawPitman(p) {
+  const r = p.rear, cp = p.cPin;
+  // main pitman rod
+  line(r.x, r.y, cp.x, cp.y, '#607080', 4.5*dpr);
+  // highlight
+  line(r.x, r.y, cp.x, cp.y, '#708090', 1.5*dpr);
+  if(showLabels) {
+    const mx=(r.x+cp.x)/2, my=(r.y+cp.y)/2;
+    label('BIELA (Pitman)', mx-50, my,'#3a5a7a',9,'right');
+  }
+}
+
+function drawBeam(p) {
+  const br = p.bRear, bf = p.bFront;
+  // shadow/depth
+  const [a,b]=W(br.x, br.y-2), [c,d]=W(bf.x, bf.y-2);
+  cx.strokeStyle='rgba(0,0,0,0.3)'; cx.lineWidth=10*dpr; cx.lineCap='butt';
+  cx.beginPath(); cx.moveTo(a,b); cx.lineTo(c,d); cx.stroke();
+  // main beam
+  const [e,f]=W(br.x,br.y), [g,h]=W(bf.x,bf.y);
+  cx.strokeStyle='#a03025'; cx.lineWidth=8*dpr; cx.lineCap='butt';
+  cx.beginPath(); cx.moveTo(e,f); cx.lineTo(g,h); cx.stroke();
+  // top highlight
+  cx.strokeStyle='#cc3a2e'; cx.lineWidth=2.5*dpr;
+  cx.beginPath(); cx.moveTo(e,f); cx.lineTo(g,h); cx.stroke();
+  if(showLabels) {
+    const mx=(p.pivot.x+p.hhead.x)/2, my=(p.pivot.y+p.hhead.y)/2;
+    label('VIGA (Walking Beam)', mx, my+18,'#5a3a3a',9);
+  }
+}
+
+function drawCounterweight(p) {
+  const cw = p.cwt, phi = p.phi;
+  const [a,b]=W(cw.x,cw.y);
+  cx.save();
+  cx.translate(a,b);
+  cx.rotate(-phi);
+  // counterweight block
+  const bw=28*S, bh=38*S;
+  cx.fillStyle='#cc7a10';
+  cx.fillRect(-bw/2,-bh/2,bw,bh);
+  cx.strokeStyle='#e8950a'; cx.lineWidth=1.5;
+  cx.strokeRect(-bw/2,-bh/2,bw,bh);
+  // detail lines
+  cx.fillStyle='#9a5a08';
+  cx.fillRect(-bw/2+3*S,-bh/2+3*S,bw-6*S,4*S);
+  cx.fillRect(-bw/2+3*S,bh/2-7*S,bw-6*S,4*S);
+  cx.restore();
+  if(showLabels) label('CONTRAPESO',cw.x, cw.y+35,'#7a5a10',9);
+}
+
+function drawHorsehead(p) {
+  // The horsehead outer arc has radius = A, centered at the PIVOT.
+  // This ensures the wireline tangent departure point stays at a fixed X,
+  // converting the radial beam motion into pure vertical linear motion.
+  const phi = p.phi;
+  const [px, py] = W(0, Hh);   // pivot = arc center
+  const rOuter = A * S;         // outer radius = distance to pivot
+  const plateW = 12 * S;        // plate visual depth (side view)
+  const rInner = rOuter - plateW;
+
+  // Arc extent (fixed angular span relative to beam direction)
+  // Must always include angle 0 (departure point) for full stroke range
+  const aStart = phi + 0.48;   // extends above beam direction
+  const aEnd   = phi - 0.85;   // extends below beam direction
+  const cStart = -aStart;       // canvas angle (negated)
+  const cEnd   = -aEnd;
+
+  // Filled horsehead body (crescent between outer and inner arcs)
+  cx.beginPath();
+  cx.arc(px, py, rOuter, cStart, cEnd, false);    // outer arc clockwise
+  cx.arc(px, py, rInner, cEnd, cStart, true);      // inner arc back
+  cx.closePath();
+  cx.fillStyle = '#8a2820';
+  cx.fill();
+  cx.strokeStyle = '#6a1e18';
+  cx.lineWidth = 1;
+  cx.stroke();
+
+  // Outer edge highlight
+  cx.beginPath();
+  cx.arc(px, py, rOuter, cStart, cEnd, false);
+  cx.strokeStyle = '#cc3a2e';
+  cx.lineWidth = 2.5 * dpr;
+  cx.lineCap = 'round';
+  cx.stroke();
+
+  // Cross yoke bearing at departure point (angle=0 on circle => x=A, y=Hh)
+  const [dpx, dpy] = W(A, Hh);
+  cx.beginPath();
+  cx.arc(dpx, dpy, 4 * dpr, 0, Math.PI * 2);
+  cx.fillStyle = '#8a9aaa';
+  cx.fill();
+  cx.strokeStyle = '#a0b0c0';
+  cx.lineWidth = 1.5;
+  cx.stroke();
+
+  if(showLabels) {
+    const la = phi + 0.15;
+    const lx = (A + 22) * Math.cos(la);
+    const ly = Hh + (A + 22) * Math.sin(la);
+    label('CABEZA (Horsehead)', lx, ly, '#7a3a2a', 9, 'left');
+  }
+}
+
+function drawWireline(p) {
+  const phi = p.phi;
+  const [px, py] = W(0, Hh);      // pivot center = horsehead arc center
+  const rWrap = A * S + 3 * dpr;  // slightly outside horsehead surface
+
+  // === 1. Wrapped portion on horsehead outer surface ===
+  // Wireline wraps from beam attachment (angle phi) to departure (angle 0)
+  const wrapFrom = -phi;  // canvas angle for beam direction
+  const wrapTo   = 0;     // canvas angle for departure point (world angle 0)
+
+  cx.beginPath();
+  if(phi >= 0) {
+    // Beam above horizontal: wrap downward from phi to 0
+    cx.arc(px, py, rWrap, wrapFrom, wrapTo, false);
+  } else {
+    // Beam below horizontal: wrap upward from phi to 0
+    cx.arc(px, py, rWrap, wrapFrom, wrapTo, true);
+  }
+  cx.strokeStyle = '#9aaaba';
+  cx.lineWidth = 1.8 * dpr;
+  cx.setLineDash([]);
+  cx.stroke();
+
+  // === 2. Free-hanging wireline: departure point (A, Hh) straight down ===
+  const departX = A;
+  const departY = Hh;
+  const cbY = p.wire.y;  // carrier bar Y position
+
+  const [dx, dy] = W(departX, departY);
+  const [bx, by] = W(departX, cbY);
+
+  cx.strokeStyle = '#8a9aaa';
+  cx.lineWidth = 1.5 * dpr;
+  cx.beginPath();
+  cx.moveTo(dx, dy);
+  cx.lineTo(bx, by);
+  cx.stroke();
+
+  // === 3. Carrier bar ===
+  cx.strokeStyle = '#7a8a9a';
+  cx.lineWidth = 3.5 * dpr;
+  cx.lineCap = 'round';
+  cx.beginPath();
+  cx.moveTo(bx - 10 * S, by);
+  cx.lineTo(bx + 10 * S, by);
+  cx.stroke();
+
+  // === 4. Polished rod into wellhead ===
+  const [prx, pry] = W(departX, cbY - 3);
+  const [prx2, pry2] = W(departX, -5);
+  cx.strokeStyle = '#9aaabc';
+  cx.lineWidth = 2.5 * dpr;
+  cx.lineCap = 'butt';
+  cx.beginPath();
+  cx.moveTo(prx, pry);
+  cx.lineTo(prx2, pry2);
+  cx.stroke();
+
+  if(showLabels) {
+    const midY = (departY + cbY) / 2;
+    label('GUAYA (Wireline)', departX + 18, midY, '#4a6a8a', 8, 'left');
+    label('BARRA PULIDA', departX + 18, cbY - 10, '#4a6a8a', 8, 'left');
+  }
+}
+
+function drawWellhead(p) {
+  const wx = A;  // fixed X position (horsehead center when beam is horizontal)
+  // Stuffing box
+  rect(wx-8, 12, 16, 18, '#1a6a3a','#2a8a4a');
+  // Wellhead body
+  rect(wx-12, -2, 24, 14, '#186838','#28884a');
+  // Flange
+  rect(wx-16, -2, 32, 5, '#156030','#228a42');
+  // Casing stub
+  rect(wx-6, -10, 12, 10, '#2a4a3a','#3a6a4a');
+  if(showLabels) label('BOCA DE POZO', wx, -18,'#2a6a3a',9);
+}
+
+function drawBearings(p) {
+  // Pivot bearing (Samson Post top)
+  circ(p.pivot.x, p.pivot.y, 5.5, '#c8d0d8','#e0e8f0',2);
+  // Rear beam / pitman bearing
+  circ(p.rear.x, p.rear.y, 3.5, '#b0b8c0','#d0d8e0',1.5);
+  // Crank pin bearing
+  circ(p.cPin.x, p.cPin.y, 3.5, '#c0c8d0','#e0e8f0',1.5);
+}
+
+function drawStrokeIndicator(p) {
+  // Vertical stroke position bar on the left
+  const bx = 25 * dpr;
+  const bt = 80 * dpr;
+  const bh = cv.height * 0.5;
+  const prY = p.wire.y;
+
+  // Update min/max
+  if(prY > prMax) prMax = prY;
+  if(prY < prMin) prMin = prY;
+  const range = prMax - prMin;
+  const norm = range > 1 ? (prY - prMin) / range : 0.5;
+
+  // Bar background
+  cx.fillStyle='#111a25';
+  cx.fillRect(bx-5*dpr, bt, 10*dpr, bh);
+  cx.strokeStyle='#1e2d3d'; cx.lineWidth=1;
+  cx.strokeRect(bx-5*dpr, bt, 10*dpr, bh);
+
+  // Fill
+  const fillH = norm * bh;
+  cx.fillStyle='rgba(0,180,220,0.25)';
+  cx.fillRect(bx-3*dpr, bt+bh-fillH, 6*dpr, fillH);
+
+  // Indicator dot
+  const iy = bt + bh - fillH;
+  cx.beginPath(); cx.arc(bx, iy, 5*dpr, 0, Math.PI*2);
+  cx.fillStyle='#00d4ff'; cx.fill();
+  cx.strokeStyle='#00a0cc'; cx.lineWidth=1.5; cx.stroke();
+
+  // Labels
+  cx.font=9*dpr+'px "Courier New",monospace';
+  cx.fillStyle='#3a6a8a'; cx.textAlign='center';
+  cx.fillText('TOP', bx, bt-8*dpr);
+  cx.fillText('BOT', bx, bt+bh+14*dpr);
+  cx.fillText(Math.round(norm*100)+'%', bx, iy-12*dpr);
+}
+
+function drawCrankIndicator(p) {
+  // Small crank angle circle in bottom-left
+  const ix = 60 * dpr;
+  const iy = cv.height - 55 * dpr;
+  const ir = 22 * dpr;
+
+  cx.strokeStyle='#1e2d3d'; cx.lineWidth=1.5;
+  cx.beginPath(); cx.arc(ix,iy,ir,0,Math.PI*2); cx.stroke();
+  cx.fillStyle='#0c1520';
+  cx.beginPath(); cx.arc(ix,iy,ir,0,Math.PI*2); cx.fill();
+
+  // Crank arm indicator
+  const ax = ix + ir * 0.75 * Math.cos(-theta);
+  const ay = iy + ir * 0.75 * Math.sin(-theta);
+  cx.strokeStyle='#00d4ff'; cx.lineWidth=2*dpr;
+  cx.beginPath(); cx.moveTo(ix,iy); cx.lineTo(ax,ay); cx.stroke();
+  cx.beginPath(); cx.arc(ax,ay,3*dpr,0,Math.PI*2);
+  cx.fillStyle='#00d4ff'; cx.fill();
+
+  // center dot
+  cx.beginPath(); cx.arc(ix,iy,2*dpr,0,Math.PI*2);
+  cx.fillStyle='#5a7a9a'; cx.fill();
+
+  // angle text
+  cx.font=9*dpr+'px "Courier New",monospace';
+  cx.fillStyle='#4a6a8a'; cx.textAlign='center'; cx.textBaseline='top';
+  cx.fillText('Manivela', ix, iy+ir+6*dpr);
+}
+
+// =====================================================
+// MAIN RENDER
+// =====================================================
+function render(ts) {
+  if(!paused) {
+    const dt = t0 ? (ts - t0) / 1000 : 0;
+    theta = (theta + spm * Math.PI / 30 * dt) % (Math.PI * 2);
+    if(theta < 0) theta += Math.PI * 2;
+  }
+  t0 = ts;
+
+  resize();
+  const p = getPos(theta);
+
+  // Determine stroke phase
+  if(p.phi > prevBeamAngle) phase = 'UPSTROKE';
+  else if(p.phi < prevBeamAngle) phase = 'DOWNSTROKE';
+  prevBeamAngle = p.phi;
+
+  // ---- Draw layers ----
+  drawBg();
+  drawGround();
+  drawCrankPath(p);
+  drawBase(p);
+  drawWellhead(p);
+  drawMotor(p);
+  drawGearReducer(p);
+  drawAngleBrace(p);
+  drawSamsonPost(p);
+  drawCrankArm(p);
+  drawPitman(p);
+  drawBeam(p);
+  drawCounterweight(p);
+  drawHorsehead(p);
+  drawWireline(p);
+  drawBearings(p);
+  drawStrokeIndicator(p);
+  drawCrankIndicator(p);
+
+  // ---- Update data panel ----
+  const crankDeg = ((theta * 180 / Math.PI) % 360).toFixed(1);
+  const beamDeg  = (p.phi * 180 / Math.PI).toFixed(1);
+  const prY = p.wire.y;
+  const strokeLen = (prMax - prMin).toFixed(1);
+  const prPos = (prY - (prMax+prMin)/2).toFixed(1);
+
+  document.getElementById('dCrank').textContent  = crankDeg + '\u00B0';
+  document.getElementById('dBeam').textContent   = beamDeg + '\u00B0';
+  document.getElementById('dPos').textContent    = prPos + '"';
+  document.getElementById('dStroke').textContent = (prMax-prMin > 5 ? strokeLen : '--') + '"';
+  document.getElementById('dSPM').textContent    = spm.toFixed(1) + ' SPM';
+  document.getElementById('dPhase').textContent  = phase === 'UPSTROKE' ? '\u25B2 SUBE' : '\u25BC BAJA';
+  document.getElementById('dPhase').style.color  = phase === 'UPSTROKE' ? '#2ecc71' : '#e67e22';
+
+  // Update crank slider position (when running)
+  if(!paused) document.getElementById('sldCrank').value = Math.round(crankDeg);
+
+  requestAnimationFrame(render);
+}
+
+// =====================================================
+// CONTROLS
+// =====================================================
+document.getElementById('btnPause').addEventListener('click', function() {
+  paused = !paused;
+  this.innerHTML = paused ? '&#9654; Play' : '&#9646;&#9646; Pausa';
+  this.classList.toggle('active', paused);
+  document.getElementById('sldCrank').disabled = !paused;
+});
+
+document.getElementById('sldSpeed').addEventListener('input', function() {
+  spm = parseFloat(this.value);
+});
+
+document.getElementById('sldCrank').addEventListener('input', function() {
+  if(paused) theta = parseFloat(this.value) * Math.PI / 180;
+});
+
+document.getElementById('btnLabels').addEventListener('click', function() {
+  showLabels = !showLabels;
+  this.classList.toggle('active', showLabels);
+});
+
+window.addEventListener('resize', resize);
+
+// =====================================================
+// INIT
+// =====================================================
+resize();
+
+// 1. Compute beam angle range to calibrate carrier bar position
+let phiMin = Infinity, phiMax = -Infinity;
+for(let t = 0; t < 360; t++) {
+  const ph = solveBeam(t * Math.PI / 180);
+  if(ph < phiMin) phiMin = ph;
+  if(ph > phiMax) phiMax = ph;
+}
+// Set cbRef so carrier bar bottom-of-stroke is at Y=15" above ground
+cbRef = 15 - A * phiMin;
+// Stroke = A * (phiMax - phiMin)
+console.log('Stroke calculado:', (A * (phiMax - phiMin)).toFixed(1) + '"',
+            'phiRange:', (phiMin*180/Math.PI).toFixed(1)+'° a '+(phiMax*180/Math.PI).toFixed(1)+'°');
+
+// 2. Warm up stroke tracking over one full revolution
+for(let t = 0; t < 360; t++) {
+  const pp = getPos(t * Math.PI / 180);
+  if(pp.wire.y > prMax) prMax = pp.wire.y;
+  if(pp.wire.y < prMin) prMin = pp.wire.y;
+}
+
+showLabels = true;
+document.getElementById('btnLabels').classList.add('active');
+requestAnimationFrame(render);
+</script>
+</body>
+</html>

@@ -1,0 +1,79 @@
+{
+  "model": "M-912D-365-168",
+  "type": "Mark II (Unitorque)",
+  "manufacturer": "Lufkin Industries",
+  "api_designation": "API 11E",
+
+  "ratings": {
+    "max_torque_in_lbs": 912000,
+    "PPRL_lbs": 36500,
+    "CCE": 912000,
+    "max_stroke_in": 168,
+    "structural_unbalance_lbs": -5385,
+    "torque_factor": 75.207,
+    "phase_angle_deg": 19
+  },
+
+  "geometry_inches": {
+    "A": 334.0,
+    "C": 270.0,
+    "I": 202.56,
+    "P": 193.5,
+    "H": 295.13,
+    "G": 112.13,
+    "description": {
+      "A": "Walking beam front (saddle to horsehead)",
+      "C": "Pitman length (connecting rod)",
+      "I": "Horizontal distance crankshaft to saddle bearing",
+      "P": "Equalizer bearing to saddle bearing",
+      "H": "Saddle bearing height above base",
+      "G": "Crankshaft height above base"
+    }
+  },
+
+  "strokes": {
+    "stroke_1": {"R_inches": 63.56, "stroke_inches": 168},
+    "stroke_2": {"R_inches": 56.56, "stroke_inches": 149},
+    "stroke_3": {"R_inches": 49.56, "stroke_inches": 130}
+  },
+
+  "well_C147": {
+    "company": "CAPSA",
+    "deposit": "Diadema",
+    "battery": "Zona 6",
+    "rotation": "Antihorario",
+    "measured_stroke_in": 165.6,
+    "motor": {
+      "type": "Electrico",
+      "power_hp": 100,
+      "pulley_mm": 220,
+      "rpm": 1200
+    },
+    "pump": {
+      "diameter_in": 1.75,
+      "depth_m": 2740
+    },
+    "counterweights": [
+      {"type": "OORO", "quantity": 4, "distance": 0}
+    ],
+    "rod_string": [
+      {"diameter_in": 1.0, "count": 91, "length_ft": 30, "material": "D", "weight_lb_ft": 2.904},
+      {"diameter_in": 0.875, "count": 111, "length_ft": 30, "material": "D", "weight_lb_ft": 2.224},
+      {"diameter_in": 0.75, "count": 96, "length_ft": 30, "material": "D", "weight_lb_ft": 1.634}
+    ],
+    "rod_string_totals": {
+      "total_length_ft": 8940,
+      "total_length_m": 2725,
+      "weight_in_air_lbs": 20040,
+      "weight_in_fluid_lbs": 17514
+    }
+  },
+
+  "overall_dimensions_estimated": {
+    "height_ft": 25,
+    "length_ft": 30,
+    "width_ft": 6,
+    "weight_without_cw_lbs": 40000,
+    "weight_with_cw_lbs": 58000
+  }
+}
