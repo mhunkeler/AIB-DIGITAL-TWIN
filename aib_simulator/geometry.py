@@ -1,9 +1,12 @@
 """
-Cinematica del balancin — Clase I convencional (API Spec 11E)
+Cinematica del balancin — Clase I y Mark II (API Spec 11E)
 
-Resuelve el cuadrilatero articulado ciguenal-biela-balancin para obtener
-la posicion, velocidad, aceleracion y factor de torque de la varilla pulida
-en funcion del angulo del ciguenal theta.
+Clase I (convencional): pitman conecta DETRAS del SB, horsehead en lado opuesto.
+  y_PR = -(A/C) * y_E
+
+Mark II (Clase III / Unitorque): pitman conecta DELANTE del SB via equalizer,
+  horsehead en el MISMO lado que el equalizer.
+  y_PR = +(A/P_rocker) * y_E
 
 Referencia: AIB_modelo_simulacion.md, Seccion 3.2
 """
@@ -183,4 +186,128 @@ def mechanism_positions(theta, A, C, I, H, P, R):
         'equalizer': (x_eb, y_eb),
         'horsehead': (x_hh, y_hh),
         'polished_rod': (x_hh, y_PR),
+    }
+
+
+# =========================================================================
+# MARK II (Clase III / Unitorque) — cinematica
+# =========================================================================
+
+def polished_rod_position_mark2(theta, A, P_rocker, C_pitman, I, H_offset, R):
+    """Posicion de la varilla pulida para unidad Mark II (Clase III).
+
+    En Mark II el cuadrilatero es: ground → crank(R) → pitman(C) → rocker(P).
+    El horsehead esta en el MISMO lado que el equalizer, a distancia A del SB.
+
+    Parameters
+    ----------
+    theta : float or ndarray — angulo del ciguenal [rad]
+    A : float         — SB → horsehead [m]
+    P_rocker : float  — SB → equalizer bearing (rocker del 4-bar) [m]
+    C_pitman : float  — longitud de la biela [m]
+    I : float         — offset horizontal SB → ciguenal [m]
+    H_offset : float  — offset vertical SB → ciguenal (= H_abs - G) [m]
+    R : float         — radio de la manivela [m]
+    """
+    x_cp = I + R * np.cos(theta)
+    y_cp = -H_offset + R * np.sin(theta)
+
+    J = np.sqrt(x_cp**2 + y_cp**2)
+
+    # Ley de cosenos: triangulo SB(origen) - EB - CP
+    # Lados: P_rocker (SB→EB), C_pitman (EB→CP), J (SB→CP)
+    cos_psi = (P_rocker**2 + J**2 - C_pitman**2) / (2 * P_rocker * J)
+    cos_psi = np.clip(cos_psi, -1.0, 1.0)
+    psi = np.arccos(cos_psi)
+
+    phi = np.arctan2(y_cp, x_cp)
+
+    # Equalizer bearing: a distancia P_rocker del SB
+    y_E = P_rocker * np.sin(phi + psi)
+
+    # Mark II: el ratio de amplificacion es C_pitman/P_rocker (no A/P_rocker).
+    # Esto se verifica contra las 3 carreras del catalogo con error < 1%.
+    # El ratio A/P sobreestima la carrera en ~23%.
+    y_PR = (C_pitman / P_rocker) * y_E
+
+    return y_PR
+
+
+def compute_kinematics_mark2(theta_array, A, P_rocker, C_pitman, I, H_offset, R):
+    """Cinematica Mark II: posicion, TF, equalizer."""
+    x_cp = I + R * np.cos(theta_array)
+    y_cp = -H_offset + R * np.sin(theta_array)
+    J = np.sqrt(x_cp**2 + y_cp**2)
+
+    cos_psi = (P_rocker**2 + J**2 - C_pitman**2) / (2 * P_rocker * J)
+    cos_psi = np.clip(cos_psi, -1.0, 1.0)
+    psi = np.arccos(cos_psi)
+    phi = np.arctan2(y_cp, x_cp)
+    angle = phi + psi
+
+    x_E = P_rocker * np.cos(angle)
+    y_E = P_rocker * np.sin(angle)
+    y_PR = (C_pitman / P_rocker) * y_E
+
+    dtheta = theta_array[1] - theta_array[0]
+    TF = np.gradient(y_PR, dtheta)
+
+    return y_PR, TF, y_E, x_E
+
+
+def full_kinematics_mark2(theta_array, omega, A, P_rocker, C_pitman, I, H_offset, R):
+    """Cinematica completa Mark II: posicion, velocidad, aceleracion, TF."""
+    y_PR, TF, y_E, x_E = compute_kinematics_mark2(
+        theta_array, A, P_rocker, C_pitman, I, H_offset, R
+    )
+    dtheta = theta_array[1] - theta_array[0]
+    v_PR = TF * omega
+    d2y_dtheta2 = np.gradient(TF, dtheta)
+    a_PR = d2y_dtheta2 * omega**2
+
+    return {
+        'y_PR': y_PR, 'v_PR': v_PR, 'a_PR': a_PR, 'TF': TF,
+        'd2y_dtheta2': d2y_dtheta2, 'x_E': x_E, 'y_E': y_E,
+    }
+
+
+def mechanism_positions_mark2(theta, A, P_rocker, C_pitman, I, H_offset, R, G=0.0):
+    """Posiciones del mecanismo Mark II para visualizacion.
+
+    Parameters
+    ----------
+    G : float — altura del ciguenal sobre la base [m] (para dibujar el suelo)
+    """
+    x_crank_center = I
+    y_crank_center = -H_offset
+
+    x_cp = I + R * np.cos(theta)
+    y_cp = -H_offset + R * np.sin(theta)
+
+    x_sb, y_sb = 0.0, 0.0
+
+    J = np.sqrt(x_cp**2 + y_cp**2)
+    cos_psi = np.clip((P_rocker**2 + J**2 - C_pitman**2) / (2 * P_rocker * J), -1.0, 1.0)
+    psi = np.arccos(cos_psi)
+    phi = np.arctan2(y_cp, x_cp)
+    angle = phi + psi
+
+    # Equalizer bearing (a distancia P del SB, mismo lado que horsehead)
+    x_eb = P_rocker * np.cos(angle)
+    y_eb = P_rocker * np.sin(angle)
+
+    # Horsehead (extension en la MISMA direccion, a distancia A del SB)
+    x_hh = A * np.cos(angle)
+    y_hh = A * np.sin(angle)
+
+    y_PR = (C_pitman / P_rocker) * y_eb
+
+    return {
+        'crank_center': (x_crank_center, y_crank_center),
+        'crank_pin': (x_cp, y_cp),
+        'saddle_bearing': (x_sb, y_sb),
+        'equalizer': (x_eb, y_eb),
+        'horsehead': (x_hh, y_hh),
+        'polished_rod': (x_hh, y_PR),
+        'base_height': -(H_offset + G),  # nivel del suelo
     }
