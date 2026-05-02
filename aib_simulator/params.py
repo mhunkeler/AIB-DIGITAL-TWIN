@@ -42,10 +42,10 @@ J_b = 800.0             # Balancin alrededor del SB [kg*m^2]
 m_pit = 250.0           # Masa total de la biela [kg]
 m_PR = 350.0            # Masa cabezal + varilla pulida + adaptadores [kg]
 
-# Contrabalanceo (sobre la manivela)
-M_cw = 2500.0           # Masa del contrapeso total [kg]
-L_cw = 0.85             # Brazo efectivo del contrapeso [m]
-tau_cw = np.pi          # Fase respecto a la manivela: 180 deg [rad]
+# Contrabalanceo (sobre la manivela) — optimizado para var_omega < 10%
+M_cw = 4000.0           # Masa del contrapeso total [kg]
+L_cw = 0.95             # Brazo efectivo del contrapeso [m]
+tau_cw = np.pi / 2      # Fase respecto a la manivela: 90 deg [rad]
 
 # ---------------------------------------------------------------------------
 # 6.3 Motor + transmision (NEMA D, 50 Hz, Argentina)
