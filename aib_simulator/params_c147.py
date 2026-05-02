@@ -125,10 +125,11 @@ rod_L = 8940 * 0.3048           # 2724.9 m total
 rod_nu = 0.10                   # factor de amortiguamiento Gibbs
 rod_c = np.pi * rod_a * rod_nu / (2 * rod_L)  # 0.291 1/s
 
-# Para el solver uniforme (usar seccion inferior como referencia)
-rod_d = rod_tapered[2]['d']
-rod_A = rod_tapered[2]['A']
-rod_w = rod_tapered[2]['w']
+# Para el solver uniforme: area promedio ponderada por longitud
+_total_L = sum(s['L'] for s in rod_tapered)
+rod_A = sum(s['A'] * s['L'] for s in rod_tapered) / _total_L  # 391 mm²
+rod_w = sum(s['w'] * s['L'] for s in rod_tapered) / _total_L
+rod_d = np.sqrt(4 * rod_A / np.pi)
 
 # Pesos de la sarta (del JSON)
 W_rod = 20040 * 4.4482          # 89,142 N en aire

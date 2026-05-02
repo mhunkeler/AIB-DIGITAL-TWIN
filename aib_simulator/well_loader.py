@@ -85,8 +85,12 @@ def load_well(json_path, well_key='well_C147', stroke_index=1):
     rod_nu = 0.10
     rod_c = np.pi * rod_a * rod_nu / (2 * rod_L)
 
-    # Seccion inferior para solver uniforme
-    last_sec = rod_sections[-1]
+    # Area promedio ponderada por longitud (para solver uniforme)
+    total_L = sum(s['L'] for s in rod_sections)
+    avg_A = sum(s['A'] * s['L'] for s in rod_sections) / total_L
+    avg_w = sum(s['w'] * s['L'] for s in rod_sections) / total_L
+    avg_d = np.sqrt(4 * avg_A / np.pi)
+    top_sec = {'d': avg_d, 'A': avg_A, 'w': avg_w}
 
     params = {
         # Geometria Mark II
@@ -117,9 +121,9 @@ def load_well(json_path, well_key='well_C147', stroke_index=1):
         'rod_E': rod_E,
         'rod_rho': rod_rho,
         'rod_a': rod_a,
-        'rod_d': last_sec['d'],
-        'rod_A': last_sec['A'],
-        'rod_w': last_sec['w'],
+        'rod_d': top_sec['d'],
+        'rod_A': top_sec['A'],
+        'rod_w': top_sec['w'],
         'rod_nu': rod_nu,
         'rod_c': rod_c,
         'W_rod': W_rod,
