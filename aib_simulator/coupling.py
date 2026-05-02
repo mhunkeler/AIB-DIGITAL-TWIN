@@ -12,7 +12,10 @@ Esquema de paso compartido (Seccion 4.3 del documento):
 """
 
 import numpy as np
-from aib_simulator.geometry import compute_kinematics, polished_rod_position
+from aib_simulator.geometry import (
+    compute_kinematics, polished_rod_position,
+    compute_kinematics_mark2,
+)
 from aib_simulator.rod_string import WaveSolver
 from aib_simulator.pump import PumpModel
 from aib_simulator.motor import torque_linear, torque_klauss
@@ -38,17 +41,27 @@ class Simulator:
 
         # Geometria
         self.A = p['A_beam']
-        self.C = p['C_beam']
         self.I = p['I_geom']
         self.H = p['H_geom']
-        self.P = p['P_pitman']
         self.R = p['R_crank']
+        self.unit_class = p.get('unit_class', 'class1')
 
         # Pre-computar cinematica (tabla de alta resolucion)
         self._theta_table = np.linspace(0, 2 * np.pi, 7200)
-        y_PR_arr, TF_arr, _, _ = compute_kinematics(
-            self._theta_table, self.A, self.C, self.I, self.H, self.P, self.R
-        )
+
+        if self.unit_class == 'mark2':
+            self.P_rocker = p['P_rocker']
+            self.C_pitman = p['C_pitman']
+            y_PR_arr, TF_arr, _, _ = compute_kinematics_mark2(
+                self._theta_table, self.A, self.P_rocker, self.C_pitman,
+                self.I, self.H, self.R
+            )
+        else:
+            self.C = p['C_beam']
+            self.P = p['P_pitman']
+            y_PR_arr, TF_arr, _, _ = compute_kinematics(
+                self._theta_table, self.A, self.C, self.I, self.H, self.P, self.R
+            )
         self._y_PR_table = y_PR_arr
         self._TF_table = TF_arr
         self._y_PR_eq = (np.max(y_PR_arr) + np.min(y_PR_arr)) / 2
